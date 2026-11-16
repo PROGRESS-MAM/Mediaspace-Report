@@ -15,6 +15,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | T1 | Ark-Testskript Größe archivierter Spaces | ark_probe.py, tests/test_ark_probe.py | – | direct | B | fertig |
 | T2 | Konsolenmeldungen, laufend gespeicherte Kurzfassung, Fehlerprotokoll | ark_probe.py, tests/test_ark_probe.py | T1 | direct | B | fertig |
+| T3 | Testskript weitere Ark-Quellen mit Zeitlimit je Aufruf | ark_sources_probe.py, tests/test_ark_sources_probe.py | T2 | direct | B | fertig |
 
 ## Entscheidungen
 - T1: Space-Name über backup_id aus get_backups(); ohne Treffer space_name der Suche – space_name der Suche ist ein interner Kurzname.
@@ -30,3 +31,8 @@
 - T2: In summary.txt nur die Anzahl nicht zugeordneter Backup-IDs – eine Liste kann bei abweichendem ID-Format sehr lang werden; Details in sizes_by_backup.csv.
 - T2: tests/ und .monarch stehen in Martins .gitignore und fehlen im Snapshot – Testdatei wird Workern und Reviewern ausdrücklich angehängt.
 - T2: Laufendes Neuschreiben der Summen-CSVs überspringt gesperrte Dateien (PermissionError, z. B. in Excel geöffnet) mit einmaliger Warnung; nur das Schreiben am Ende zählt als Fehler – sonst bricht ein offenes Excel den Lauf ab.
+- T3: Wildcard-Suche hängt bei Martin in Schritt 2 (vermutlich Zählung aller Treffer über 7557 Tape-Backups) – zuerst günstige Endpunkte mit Größenangaben prüfen.
+- T3: Eigenes Skript ark_sources_probe.py, nutzt Helfer aus ark_probe.py – ark_probe.py bleibt unverändert.
+- T3: Jeder Aufruf in eigenem Thread mit Zeitlimit und frischer Ark-Verbindung – ArkAPI hat kein Zeitlimit; eine hängende Verbindung darf nicht weiterbenutzt werden.
+- T3: Beispiel-Backup = jüngstes __ms__-Tape-Backup; Pool = dessen destination_id.
+- T3: Fehlt Beispiel-Backup oder Pool, entfallen beide Inhaltsaufrufe (8 und 9) – Reviewer-Korrektur, bei Martins Daten haben alle Backups einen Pool.
