@@ -28,7 +28,11 @@ ARK_PASSWORD=<password>
 python ark_probe.py
 ```
 
-Abbrechen mit `Strg+C`: Bereits gelesene Daten werden noch gespeichert.
+In VS Code: `ark_probe.py` öffnen und „Python-Datei ausführen“ (Ausgabe im Terminal) oder den Befehl oben im Terminal starten.
+
+Die Konsole zeigt die Schritte `[1/4]` bis `[4/4]`, beim Lesen aller Dateien den Fortschritt je Seite und am Ende die Kurzfassung. `summary.txt` wird nach jedem Schritt und jeder Seite aktualisiert und zeigt auch nach einem Abbruch den letzten Stand.
+
+Abbrechen mit `Strg+C`: Bereits gelesene Daten bleiben gespeichert. Bei einem Fehler steht die Ursache in `summary.txt` und die vollständige Meldung in `traceback.txt`.
 
 ### Config (Kopf von `ark_probe.py`)
 
@@ -43,7 +47,8 @@ Abbrechen mit `Strg+C`: Bereits gelesene Daten werden noch gespeichert.
 
 | Datei | Inhalt |
 | --- | --- |
-| `summary.txt` | Kurzfassung des Laufs |
+| `summary.txt` | Kurzfassung des Laufs mit Status, Schritt und Fehler |
+| `traceback.txt` | Nur bei Fehler: vollständige Fehlermeldung |
 | `backups.json`, `backups.csv` | Alle Backups aus Ark |
 | `search_sample.json` | Erste Suchantwort mit einem Treffer |
 | `files.csv` | Alle gefundenen Dateien |

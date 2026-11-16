@@ -2,6 +2,4 @@ cred.env
 probe_output/
 __pycache__/
 *.pyc
-tests/
-.monarch
 .venv
