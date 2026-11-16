@@ -14,7 +14,7 @@
 | ID | Paket | Dateien | Abhängig von | Modus | Review | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | T1 | Ark-Testskript Größe archivierter Spaces | ark_probe.py, tests/test_ark_probe.py | – | direct | B | fertig |
-| T2 | Konsolenmeldungen, laufend gespeicherte Kurzfassung, Fehlerprotokoll | ark_probe.py, tests/test_ark_probe.py | T1 | direct | B | läuft (minizilla_3) |
+| T2 | Konsolenmeldungen, laufend gespeicherte Kurzfassung, Fehlerprotokoll | ark_probe.py, tests/test_ark_probe.py | T1 | direct | B | fertig |
 
 ## Entscheidungen
 - T1: Space-Name über backup_id aus get_backups(); ohne Treffer space_name der Suche – space_name der Suche ist ein interner Kurzname.
@@ -29,3 +29,4 @@
 - T2: Ungültige oder fehlende Dateigröße zählt 0 und wird als „ungültige größen“ gezählt statt den Lauf zu beenden.
 - T2: In summary.txt nur die Anzahl nicht zugeordneter Backup-IDs – eine Liste kann bei abweichendem ID-Format sehr lang werden; Details in sizes_by_backup.csv.
 - T2: tests/ und .monarch stehen in Martins .gitignore und fehlen im Snapshot – Testdatei wird Workern und Reviewern ausdrücklich angehängt.
+- T2: Laufendes Neuschreiben der Summen-CSVs überspringt gesperrte Dateien (PermissionError, z. B. in Excel geöffnet) mit einmaliger Warnung; nur das Schreiben am Ende zählt als Fehler – sonst bricht ein offenes Excel den Lauf ab.
