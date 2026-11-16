@@ -36,3 +36,4 @@
 - T3: Jeder Aufruf in eigenem Thread mit Zeitlimit und frischer Ark-Verbindung – ArkAPI hat kein Zeitlimit; eine hängende Verbindung darf nicht weiterbenutzt werden.
 - T3: Beispiel-Backup = jüngstes __ms__-Tape-Backup; Pool = dessen destination_id.
 - T3: Fehlt Beispiel-Backup oder Pool, entfallen beide Inhaltsaufrufe (8 und 9) – Reviewer-Korrektur, bei Martins Daten haben alle Backups einen Pool.
+- Teil 2 verworfen (Martin, 2026-11-16): Größe archivierter Projekte wird nicht ermittelt – keiner der Ansätze (Ark-Suche, Ark-Pools, FLOW-Metadaten) ist praktikabel.
