@@ -30,7 +30,7 @@ from ms_state import (
 
 # CONFIG
 app_name = "mediaspace_report"
-app_version = "0.4.0"
+app_version = "0.5.0"
 unit_bytes = 2**40
 script_dir = Path(__file__).resolve().parent
 cred_path = script_dir / "cred.env"
@@ -73,6 +73,19 @@ class Phase:
 
 
 _PROJECT_PATTERN = re.compile(r"^(.+?)[ _-]+(archiv|archive|render|onlining|rushes|project|projekt)$", re.IGNORECASE)
+
+
+def resolve_report_dir(output_dir: str | None, output_subdir: str | None) -> tuple[Path, Path | None]:
+    """Resolve the report directory and optional mounted destination root."""
+    if output_dir is None or not output_dir.strip():
+        return report_dir, None
+
+    root = Path(output_dir)
+    subdir = (output_subdir or "").replace("\\", "/")
+    parts = [part for part in subdir.split("/") if part and part != "."]
+    if ".." in parts:
+        raise ValueError(f"Ungültiges Unterverzeichnis: {output_subdir}")
+    return root.joinpath(*parts), root
 
 
 def parse_project(space_name: str) -> str | None:
@@ -326,12 +339,18 @@ def _lto_lines(state: dict) -> list[LtoLine]:
     return sorted(lines, key=lambda line: (line.project.casefold(), line.start))
 
 
-def _write_month(state: dict, phases: dict[str, list[Phase]], month: str, closed: bool) -> None:
+def _write_month(
+    state: dict,
+    phases: dict[str, list[Phase]],
+    month: str,
+    closed: bool,
+    target_dir: Path,
+) -> None:
     totals = month_totals(state, month)
     count = snapshot_count(state, month)
     report_lines, raw_lines = month_report(totals, count, phases, month)
     write_workbook(
-        report_path(report_dir, month),
+        report_path(target_dir, month),
         status_line(month, last_snapshot_day(state, month), count, closed),
         report_lines,
         raw_lines,
@@ -345,10 +364,11 @@ def _try_write_month(
     phases: dict[str, list[Phase]],
     month: str,
     closed: bool,
+    target_dir: Path,
 ) -> tuple[bool, bool]:
-    path = report_path(report_dir, month)
+    path = report_path(target_dir, month)
     try:
-        _write_month(state, phases, month, closed)
+        _write_month(state, phases, month, closed, target_dir)
     except OSError:
         logger.exception("Bericht %s konnte nicht geschrieben werden", path.name)
         return False, True
@@ -360,12 +380,21 @@ def run(
     fetch: Callable[[], list[dict]],
     message_handler: Callable[[str, str], None] | None = None,
     extra_args: str | None = None,
+    output_dir: str | None = None,
+    output_subdir: str | None = None,
 ) -> int:
     """Fetch, store and report the nightly Media Space snapshot."""
     logger = _configure_logger(message_handler)
     logger.info("%s %s gestartet", app_name, app_version)
     if extra_args:
         logger.info("Zusatzargumente: %s", extra_args)
+    try:
+        target_dir, mount_root = resolve_report_dir(output_dir, output_subdir)
+    except ValueError as error:
+        logger.error("%s", error)
+        target_dir = mount_root = None
+    else:
+        logger.info("Berichtsordner: %s", target_dir)
     try:
         state = load_state(state_path)
     except StateError as error:
@@ -391,24 +420,32 @@ def run(
     open_month = next_day.strftime("%Y-%m") if next_day.day == 1 else day.strftime("%Y-%m")
     write_failed = False
     report_dir_ready = True
-    try:
-        report_dir.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        logger.exception("Berichtsordner %s konnte nicht angelegt werden", report_dir)
+    if target_dir is None:
         report_dir_ready = False
         write_failed = True
+    elif mount_root is not None and not mount_root.is_dir():
+        logger.error("Ziel-Space nicht verfügbar: %s – Berichte werden beim nächsten Lauf geschrieben", mount_root)
+        report_dir_ready = False
+        write_failed = True
+    else:
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            logger.exception("Berichtsordner %s konnte nicht angelegt werden", target_dir)
+            report_dir_ready = False
+            write_failed = True
 
     closed_months: list[str] = []
     if report_dir_ready:
         for month in closable_months(state, day):
             _update_lto(state, phases, month)
-            written, failed = _try_write_month(logger, state, phases, month, True)
+            written, failed = _try_write_month(logger, state, phases, month, True, target_dir)
             write_failed = write_failed or failed
             if written:
                 drop_month(state, month)
                 closed_months.append(month)
 
-        written, failed = _try_write_month(logger, state, phases, open_month, False)
+        written, failed = _try_write_month(logger, state, phases, open_month, False, target_dir)
         write_failed = write_failed or failed
 
     try:
@@ -417,10 +454,11 @@ def run(
         logger.exception("Zustand konnte nicht gespeichert werden: %s", state_path)
         write_failed = True
 
-    try:
-        prune_reports(report_dir, keep_reports)
-    except OSError:
-        logger.warning("Berichte in %s konnten nicht bereinigt werden", report_dir, exc_info=True)
+    if report_dir_ready:
+        try:
+            prune_reports(target_dir, keep_reports)
+        except OSError:
+            logger.warning("Berichte in %s konnten nicht bereinigt werden", target_dir, exc_info=True)
 
     active_spaces = sum(space.removed is None for space in spaces)
     closed_text = ", ".join(closed_months) if closed_months else "–"
@@ -439,6 +477,8 @@ def run(
 def update_mediaspace_report(
     message_handler: Callable[[str, str], None] | None = None,
     extra_args: str | None = None,
+    output_dir: str | None = None,
+    output_subdir: str | None = None,
 ) -> int:
     try:
         return run(
@@ -446,6 +486,8 @@ def update_mediaspace_report(
             lambda: fetch_spaces(cred_path, api_timeout),
             message_handler,
             extra_args,
+            output_dir=output_dir,
+            output_subdir=output_subdir,
         )
     except KeyboardInterrupt:
         return 130

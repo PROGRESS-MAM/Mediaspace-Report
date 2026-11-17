@@ -16,8 +16,10 @@ Erstellt aus nächtlichen Snapshots monatliche Excel-Berichte zur Speicherbelegu
     ├── cred.env                       Zugangsdaten, manuell anlegen
     ├── mediaspace_state.json          legt das Skript an
     ├── mediaspace_report.log          legt das Skript an (rotiert: .log.1, .log.2)
-    └── reports/                       legt das Skript an
-        └── Mediaspace-Report_YYYY-MM.xlsx
+    └── reports/                       nur ohne Destination Media Space, legt das Skript an
+
+<Destination Media Space>/<Subdir>/  Berichtsordner im Flow-Betrieb, von Flow eingehängt
+└── Mediaspace-Report_YYYY-MM.xlsx
 ```
 
 Die Toolbox-Mini wird von diesem Paket nicht verwendet und muss nicht kopiert werden.
@@ -37,7 +39,21 @@ Python 3.10 oder neuer. Installiert werden muss in das `python3`, das der Launch
 Im ausgecheckten Repo ausführen. `<flow-user>` ist der Linux-Benutzer, unter dem Flow Automation die Skripte ausführt; er braucht Schreibrechte im Ordner `mediaspace_report/`.
 
 ```bash
-chmod +x /var/flow/automation/scripts/mediaspace_report_launcher.pyy
+base=/var/flow/automation/scripts
+sudo mkdir -p "$base/mediaspace_report"
+sudo cp mediaspace_report_launcher.py "$base/"
+sudo cp mediaspace_report.py ms_source.py ms_state.py ms_excel.py requirements.txt "$base/mediaspace_report/"
+sudo sed -i 's/\r$//' "$base/mediaspace_report_launcher.py" "$base"/mediaspace_report/*.py
+sudo chmod +x "$base/mediaspace_report_launcher.py"
+
+sudo tee "$base/mediaspace_report/cred.env" > /dev/null <<'ENV'
+FLOW_HOST=<host>
+FLOW_USER=<user>
+FLOW_PASSWORD=<password>
+ENV
+
+sudo chown -R <flow-user>:<flow-user> "$base/mediaspace_report"
+sudo chmod 600 "$base/mediaspace_report/cred.env"
 
 python3 -m pip install -r "$base/mediaspace_report/requirements.txt"
 python3 -c "from zoneinfo import ZoneInfo; ZoneInfo('Europe/Berlin')"
@@ -49,6 +65,15 @@ Alle Dateien müssen UNIX-Zeilenenden (LF) haben; der `sed`-Befehl entfernt even
 
 **Flow Automation:** Module **Time** und **Script Runner**, die `/var/flow/automation/scripts/mediaspace_report_launcher.py` aufrufen. Der Lauf muss täglich um **00:01 Uhr** starten.
 
+Im Script Runner:
+
+| Option | Wert | Wirkung |
+| --- | --- | --- |
+| Destination Media Space | z. B. `Transfer` | Flow hängt den Space ein und übergibt den Pfad als `output_dir` |
+| Subdir | z. B. `tmp Claudia\_Mediaspace Reports` | Unterordner im Space (`output_subdir`); `\` und `/` sind erlaubt, `..` nicht; fehlende Ordner werden angelegt |
+
+Ohne Destination Media Space schreibt das Skript nach `report_dir`. Ist der Ziel-Space nicht verfügbar oder der Subdir ungültig, wird der Snapshot trotzdem gespeichert, der Lauf endet mit Exit-Code `1` und der nächste Lauf schreibt die Berichte. State-JSON und Log bleiben immer lokal in `mediaspace_report/`.
+
 **Manuell:**
 
 ```bash
@@ -56,7 +81,7 @@ Alle Dateien müssen UNIX-Zeilenenden (LF) haben; der `sed`-Befehl entfernt even
 echo $?
 ```
 
-Meldungen erscheinen auf der Konsole und im Log, im Flow-Betrieb im Job-Log. Ohne `--standalone` läuft der Launcher als AutomationScript, wenn `editshare_helpers` verfügbar ist, sonst im Standalone-Modus.
+Meldungen erscheinen auf der Konsole und im Log, im Flow-Betrieb im Job-Log. Der Standalone-Modus schreibt immer nach `report_dir`. Ohne `--standalone` läuft der Launcher als AutomationScript, wenn `editshare_helpers` verfügbar ist, sonst im Standalone-Modus.
 
 Exit-Codes: `0` = ok, `1` = Fehler (Details im Log), `130` = abgebrochen. Im Flow-Betrieb schlägt der Job bei einem Fehler fehl.
 
@@ -67,13 +92,13 @@ Ein manueller Lauf ersetzt den Snapshot des Vortags durch den aktuellen Wert.
 | Eintrag | Standard | Bedeutung |
 | --- | --- | --- |
 | `app_name` | `mediaspace_report` | Anwendungsname |
-| `app_version` | `0.4.0` | Skriptversion |
+| `app_version` | `0.5.0` | Skriptversion |
 | `unit_bytes` | `2**40` | Byte je TiB |
 | `script_dir` | Ordner des Moduls | Basisordner (`mediaspace_report/`) |
 | `cred_path` | `script_dir / "cred.env"` | Zugangsdaten |
 | `state_path` | `script_dir / "mediaspace_state.json"` | Snapshot-Zustand |
 | `log_path` | `script_dir / "mediaspace_report.log"` | Laufprotokoll, max. 1 MB, 2 Rotationen |
-| `report_dir` | `script_dir / "reports"` | Berichtsordner |
+| `report_dir` | `script_dir / "reports"` | Berichtsordner ohne Destination Media Space (Standalone) |
 | `api_timeout` | `120` | Zeitlimit für den Abruf in Sekunden |
 | `keep_reports` | `24` | Zahl der zu behaltenden Monatsberichte |
 

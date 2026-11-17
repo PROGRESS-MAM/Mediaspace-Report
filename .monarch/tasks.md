@@ -43,6 +43,9 @@
 | T11 | Einstieg update_mediaspace_report/main(argv), Flow-Meldungen, Windows-Teile entfernen | mediaspace_report.py, tests/test_mediaspace_run.py | T10 | direct | B | fertig |
 | T12 | Launcher Flow Automation/Standalone | mediaspace_report_launcher.py, tests/test_launcher.py | T11 (Schnittstelle) | direct | A | fertig |
 | T13 | README Worker-Deploy, requirements.txt | README.md, requirements.txt | – | CodeZilla | – | fertig |
+| T14 | Berichtsordner aus Destination Media Space (output_dir/output_subdir) | mediaspace_report.py, tests/test_mediaspace_run.py | T11 | direct | B | fertig |
+| T15 | Launcher übergibt output_dir/output_subdir | mediaspace_report_launcher.py, tests/test_launcher.py | T12, T14 (Schnittstelle) | direct | A | fertig |
+| T16 | README Destination Media Space | README.md | – | CodeZilla | – | fertig |
 
 ## Entscheidungen
 - T1: Space-Name über backup_id aus get_backups(); ohne Treffer space_name der Suche – space_name der Suche ist ein interner Kurzname.
@@ -116,3 +119,8 @@
 - T12: Launcher folgt metadata_file_launcher.py aus ES-All-Meta; Exit-Code ≠ 0 → error_and_exit.
 - T13: README ohne storage_probe-Abschnitt – storage_probe.py ist nicht mehr im Repo; tests/test_storage_probe.py ist verwaist und nicht Teil der Abnahme.
 - T13: Repo bleibt flach wie die Vorlage; die Unterordner-Struktur entsteht beim Kopieren auf den Worker.
+- T14 (Martin, 2026-11-17): Berichte über Flow Automation „Destination Media Space“ (Transfer, Subdir „tmp Claudia\_Mediaspace Reports“); Flow hängt den Space ein, das Skript mountet nicht selbst.
+- T14: Subdir: „\“ wird zu „/“, leere und „.“-Teile entfallen, „..“ ist ungültig – Eingabe im Panel im Windows-Stil.
+- T14: Ziel-Space-Wurzel (output_dir) fehlt oder Subdir ungültig: Snapshot speichern, keine Berichte, Exit 1; die Wurzel wird nie angelegt – sonst landen Berichte bei fehlendem Mount auf der lokalen Platte.
+- T14: Ohne output_dir (Standalone) gilt report_dir aus CONFIG.
+- T15: Launcher meldet am Ende „mediaspace_report abgeschlossen“; der Berichtsordner steht als Logzeile „Berichtsordner: …“ im Job-Log.

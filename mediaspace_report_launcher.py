@@ -8,7 +8,7 @@ from pathlib import Path
 
 # CONFIG
 app_name = "mediaspace_report_launcher"
-app_version = "1.0.0"
+app_version = "1.1.0"
 script_path = Path(__file__).resolve().parent
 target_path = script_path / "mediaspace_report"
 
@@ -33,7 +33,7 @@ except ImportError:
 class MediaspaceReportScript(AutomationScript):
     def process_asset(self, asset_info):
         try:
-            exit_code = mediaspace_report.update_mediaspace_report(message_handler=self.add_message, extra_args=self.extra_args())
+            exit_code = mediaspace_report.update_mediaspace_report(message_handler=self.add_message, extra_args=self.extra_args(), output_dir=self.input_data.get("output_dir"), output_subdir=self.input_data.get("output_subdir"))
         except Exception as exc:
             self.add_message("error", traceback.format_exc())
             self.error_and_exit(f"{mediaspace_report.app_name} fehlgeschlagen: {exc}")
@@ -41,7 +41,7 @@ class MediaspaceReportScript(AutomationScript):
         if exit_code != 0:
             self.error_and_exit(f"{mediaspace_report.app_name} fehlgeschlagen (Exit-Code {exit_code}), Details in {mediaspace_report.log_path}")
             return
-        self.add_message("info", f"Bericht aktualisiert in {mediaspace_report.report_dir}")
+        self.add_message("info", f"{mediaspace_report.app_name} abgeschlossen")
 
 # MAIN
 def main(args: list[str]) -> int:

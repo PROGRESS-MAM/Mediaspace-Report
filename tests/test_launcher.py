@@ -18,8 +18,8 @@ def make_workspace(tmp_path, *, with_module=True, flow=False):
             'app_name = "mediaspace_report"; log_path = "LOG"; report_dir = "REPORTS"\n'
             "def main(argv=None):\n"
             '    print("MAIN", argv); return int(os.environ.get("STUB_CODE", "0"))\n'
-            "def update_mediaspace_report(message_handler=None, extra_args=None):\n"
-            '    message_handler("info", f"UPDATE {extra_args}")\n'
+            "def update_mediaspace_report(message_handler=None, extra_args=None, output_dir=None, output_subdir=None):\n"
+            '    message_handler("info", f"UPDATE {extra_args} {output_dir} {output_subdir}")\n'
             '    if os.environ.get("STUB_MODE") == "raise": raise RuntimeError("boom")\n'
             '    return int(os.environ.get("STUB_CODE", "0"))\n',
             encoding="utf-8",
@@ -30,6 +30,9 @@ def make_workspace(tmp_path, *, with_module=True, flow=False):
         (helpers_dir / "__init__.py").write_text("", encoding="utf-8")
         (helpers_dir / "automation.py").write_text(
             "class AutomationScript:\n"
+            "    def __init__(self):\n"
+            "        import json, os\n"
+            '        self.input_data = json.loads(os.environ.get("STUB_INPUT", "{}"))\n'
             '    def add_message(self, level, message): print(f"MSG {level}: {message}")\n'
             '    def extra_args(self): return "x=1"\n'
             '    def error_and_exit(self, message): print(f"ERROR_EXIT: {message}"); raise SystemExit(1)\n'
@@ -68,8 +71,17 @@ def test_flow_success(tmp_path):
     env = make_workspace(tmp_path, flow=True)
     result = run_launcher(tmp_path, [], env)
     assert result.returncode == 0
-    assert "MSG info: UPDATE x=1" in result.stdout
-    assert "MSG info: Bericht aktualisiert in REPORTS" in result.stdout
+    assert "MSG info: UPDATE x=1 None None" in result.stdout
+    assert "MSG info: mediaspace_report abgeschlossen" in result.stdout
+
+
+def test_flow_passes_destination(tmp_path):
+    env = make_workspace(tmp_path, flow=True)
+    import json
+    env["STUB_INPUT"] = json.dumps({"output_dir": "/mnt/flow/outputms", "output_subdir": "tmp Claudia\\_Mediaspace Reports"})
+    result = run_launcher(tmp_path, [], env)
+    assert result.returncode == 0
+    assert "MSG info: UPDATE x=1 /mnt/flow/outputms tmp Claudia\\_Mediaspace Reports" in result.stdout
 
 
 def test_flow_nonzero_exit_fails_job(tmp_path):

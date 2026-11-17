@@ -409,3 +409,89 @@ def test_main_passes_extra_args(monkeypatch):
     assert calls[-1]["extra_args"] == "--a b"
     assert report.main([]) == 7
     assert calls[-1]["extra_args"] is None
+
+
+def test_resolve_report_dir_default(paths):
+    assert report.resolve_report_dir(None, None) == (report.report_dir, None)
+    assert report.resolve_report_dir("  ", "x") == (report.report_dir, None)
+
+
+def test_resolve_report_dir_normalizes_subdir(paths):
+    assert report.resolve_report_dir("/mnt/out", "tmp Claudia\\_Mediaspace Reports") == (
+        Path("/mnt/out/tmp Claudia/_Mediaspace Reports"), Path("/mnt/out")
+    )
+    assert report.resolve_report_dir("/mnt/out", "/a/./b/") == (
+        Path("/mnt/out/a/b"), Path("/mnt/out")
+    )
+    assert report.resolve_report_dir("/mnt/out", None) == (Path("/mnt/out"), Path("/mnt/out"))
+
+
+def test_resolve_report_dir_rejects_parent(paths):
+    with pytest.raises(ValueError, match="Ungültiges Unterverzeichnis"):
+        report.resolve_report_dir("/mnt/out", "a/../x")
+
+
+def test_run_writes_to_output_dir(paths):
+    space = paths / "space"
+    space.mkdir()
+    messages = []
+    assert report.run(
+        datetime(2026, 11, 17, 0, 1, tzinfo=BERLIN),
+        lambda: [_space("u1", "Iran Archive")],
+        message_handler=lambda level, text: messages.append((level, text)),
+        output_dir=str(space),
+        output_subdir="tmp Claudia\\_Mediaspace Reports",
+    ) == 0
+    assert (space / "tmp Claudia" / "_Mediaspace Reports" / "Mediaspace-Report_2026-11.xlsx").exists()
+    assert not (paths / "reports").exists()
+    assert any("Berichtsordner:" in text for _, text in messages)
+
+
+def test_run_missing_output_dir_keeps_state(paths):
+    output_dir = paths / "missing"
+    assert report.run(
+        datetime(2026, 11, 17, 0, 1, tzinfo=BERLIN),
+        lambda: [_space("u1", "Iran Archive")],
+        output_dir=str(output_dir),
+    ) == 1
+    state_path = paths / "mediaspace_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert "2026-11" in state["months"]
+    log = (paths / "mediaspace_report.log").read_text(encoding="utf-8")
+    assert "Ziel-Space nicht verfügbar" in log
+    assert not output_dir.exists()
+
+    output_dir.mkdir()
+    assert report.run(
+        datetime(2026, 11, 18, 0, 1, tzinfo=BERLIN),
+        lambda: [_space("u1", "Iran Archive")],
+        output_dir=str(output_dir),
+    ) == 0
+    assert (output_dir / "Mediaspace-Report_2026-11.xlsx").exists()
+
+
+def test_run_invalid_subdir_keeps_state(paths):
+    output_dir = paths / "space"
+    output_dir.mkdir()
+    assert report.run(
+        datetime(2026, 11, 17, 0, 1, tzinfo=BERLIN),
+        lambda: [_space("u1", "Iran Archive")],
+        output_dir=str(output_dir),
+        output_subdir="../x",
+    ) == 1
+    assert (paths / "mediaspace_state.json").exists()
+    assert "Ungültiges Unterverzeichnis" in (paths / "mediaspace_report.log").read_text(encoding="utf-8")
+
+
+def test_update_passes_output_args(monkeypatch):
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append((args, kwargs))
+        return 0
+
+    monkeypatch.setattr(report, "run", fake_run)
+    assert report.update_mediaspace_report(output_dir="/o", output_subdir="s") == 0
+    assert calls[-1][1]["output_dir"] == "/o"
+    assert calls[-1][1]["output_subdir"] == "s"
+
