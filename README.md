@@ -1,67 +1,102 @@
 # Mediaspace-Report
 
-## mediaspace_report.py
+Erstellt aus nächtlichen Snapshots monatliche Excel-Berichte zur Speicherbelegung der Media Spaces je Projekt. Jeder Lauf schreibt den Bericht des laufenden Monats fort, schließt am 01. den Vormonat ab, führt den LTO-Bestand für Looks-Projekte und bereinigt ältere Berichte. Läuft als EditShare-Flow-Automation-Skript auf dem Linux-Worker.
 
-Das Skript erstellt aus nächtlichen Snapshots monatliche Excel-Berichte zur Speicherbelegung der Media Spaces je Projekt. Es schließt den Vormonat ab, führt den LTO-Bestand für Looks-Projekte und bereinigt ältere Berichte.
+## Dateien auf dem Worker
 
-### Installation
-
-Python 3.11 oder neuer.
-
-```console
-pip config set global.extra-index-url https://artifacts.editshare.com/artifactory/api/pypi/editshare-pypi-public/simple
-pip install editshare-flow-api python-dotenv openpyxl tzdata
+```text
+/var/flow/automation/scripts/
+├── mediaspace_report_launcher.py      Launcher (Flow Automation oder --standalone)
+└── mediaspace_report/
+    ├── mediaspace_report.py           Hauptmodul
+    ├── ms_source.py                   Abruf der Media Spaces (Admin-API)
+    ├── ms_state.py                    Zustandsdatei und Snapshots
+    ├── ms_excel.py                    Excel-Arbeitsmappe
+    ├── requirements.txt               pip-Abhängigkeiten (nur für die Installation)
+    ├── cred.env                       Zugangsdaten, manuell anlegen
+    ├── mediaspace_state.json          legt das Skript an
+    ├── mediaspace_report.log          legt das Skript an (rotiert: .log.1, .log.2)
+    └── reports/                       legt das Skript an
+        └── Mediaspace-Report_YYYY-MM.xlsx
 ```
 
-`cred.env` neben dem Skript anlegen und nicht committen:
+Die Toolbox-Mini wird von diesem Paket nicht verwendet und muss nicht kopiert werden.
 
-```dotenv
+## Pakete
+
+Python 3.10 oder neuer. Installiert werden muss in das `python3`, das der Launcher über `#!/usr/bin/env python3` startet:
+
+| Paket | Zweck |
+| --- | --- |
+| `editshare-flow-api~=2026.2.1.0` | FlowAPI (Admin-API), aus dem EditShare-Paketindex |
+| `python-dotenv` | liest `cred.env` |
+| `openpyxl` | schreibt die Excel-Berichte |
+
+## Installation (Linux)
+
+Im ausgecheckten Repo ausführen. `<flow-user>` ist der Linux-Benutzer, unter dem Flow Automation die Skripte ausführt; er braucht Schreibrechte im Ordner `mediaspace_report/`.
+
+```bash
+base=/var/flow/automation/scripts
+sudo mkdir -p "$base/mediaspace_report"
+sudo cp mediaspace_report_launcher.py "$base/"
+sudo cp mediaspace_report.py ms_source.py ms_state.py ms_excel.py requirements.txt "$base/mediaspace_report/"
+sudo sed -i 's/\r$//' "$base/mediaspace_report_launcher.py" "$base"/mediaspace_report/*.py
+sudo chmod +x "$base/mediaspace_report_launcher.py"
+
+sudo tee "$base/mediaspace_report/cred.env" > /dev/null <<'ENV'
 FLOW_HOST=<host>
 FLOW_USER=<user>
 FLOW_PASSWORD=<password>
+ENV
+
+sudo chown -R <flow-user>:<flow-user> "$base/mediaspace_report"
+sudo chmod 600 "$base/mediaspace_report/cred.env"
+
+python3 -m pip install -r "$base/mediaspace_report/requirements.txt"
+python3 -c "from zoneinfo import ZoneInfo; ZoneInfo('Europe/Berlin')"
 ```
 
-### Verwendung
+Alle Dateien müssen UNIX-Zeilenenden (LF) haben; der `sed`-Befehl entfernt eventuelle CR-Zeichen.
 
-```console
-python mediaspace_report.py
+## Start
+
+**Flow Automation:** Module **Time** und **Script Runner**, die `/var/flow/automation/scripts/mediaspace_report_launcher.py` aufrufen. Der Lauf muss täglich um **00:01 Uhr** starten.
+
+**Manuell:**
+
+```bash
+/var/flow/automation/scripts/mediaspace_report_launcher.py --standalone
+echo $?
 ```
 
-Für den nächtlichen Lauf unter Windows in der Aufgabenplanung täglich um 00:01 Uhr einen Task anlegen, zum Beispiel:
+Meldungen erscheinen auf der Konsole und im Log, im Flow-Betrieb im Job-Log. Ohne `--standalone` läuft der Launcher als AutomationScript, wenn `editshare_helpers` verfügbar ist, sonst im Standalone-Modus.
 
-```console
-schtasks /Create /SC DAILY /ST 00:01 /TN "Mediaspace-Report" /TR "\"C:\Pfad\zu\python.exe\" \"C:\Pfad\zu\mediaspace_report.py\""
-```
+Exit-Codes: `0` = ok, `1` = Fehler (Details im Log), `130` = abgebrochen. Im Flow-Betrieb schlägt der Job bei einem Fehler fehl.
 
-### Config (Kopf von `mediaspace_report.py`)
+Ein manueller Lauf ersetzt den Snapshot des Vortags durch den aktuellen Wert.
+
+## Config (Kopf von `mediaspace_report.py`)
 
 | Eintrag | Standard | Bedeutung |
 | --- | --- | --- |
 | `app_name` | `mediaspace_report` | Anwendungsname |
-| `app_version` | `0.3.0` | Skriptversion |
+| `app_version` | `0.4.0` | Skriptversion |
 | `unit_bytes` | `2**40` | Byte je TiB |
-| `script_dir` | Ordner des Skripts | Basisordner |
+| `script_dir` | Ordner des Moduls | Basisordner (`mediaspace_report/`) |
 | `cred_path` | `script_dir / "cred.env"` | Zugangsdaten |
 | `state_path` | `script_dir / "mediaspace_state.json"` | Snapshot-Zustand |
-| `log_path` | `script_dir / "mediaspace_report.log"` | Laufprotokoll |
-| `report_dir` | `script_dir / "reports"` | Hier den festen Berichtsordner eintragen (Standard: reports neben dem Skript) |
+| `log_path` | `script_dir / "mediaspace_report.log"` | Laufprotokoll, max. 1 MB, 2 Rotationen |
+| `report_dir` | `script_dir / "reports"` | Berichtsordner |
 | `api_timeout` | `120` | Zeitlimit für den Abruf in Sekunden |
 | `keep_reports` | `24` | Zahl der zu behaltenden Monatsberichte |
 
-### Dateien und Hinweise
+## Hinweise
 
-- `reports/Mediaspace-Report_YYYY-MM.xlsx`: Monatsbericht mit den Blättern `Bericht`, `Rohdaten` und `LTO-Bestand`.
-- `mediaspace_state.json`: gespeicherte Snapshots und LTO-Daten.
-- `mediaspace_report.log`: Laufmeldungen.
-- Alle Größenwerte sind in TiB.
+- `Mediaspace-Report_YYYY-MM.xlsx` enthält die Blätter `Bericht`, `Rohdaten` und `LTO-Bestand`. Alle Größenwerte sind in TiB.
 - Der Bericht bleibt vorläufig bis zum Lauf am 01. des Folgemonats um 00:01 Uhr.
 - Ein Snapshot um 00:01 Uhr gilt für den Vortag.
 - Fehlt eine Nacht, zählt sie nicht; fehlen mehrere Nächte, wird interpoliert und der Wert markiert.
+- Kann ein Bericht nicht geschrieben werden, bleibt der Monat im Zustand und der nächste Lauf schreibt ihn neu.
 - Der LTO-Bestand umfasst nur Looks-Projekte und beginnt erst ab dem Start der Erfassung.
 - Der erste Monat enthält nur Snapshots ab dem ersten Lauf.
-
-## storage_probe.py
-
-Das Skript ist ein nur lesendes Testskript für Storage-Abfragen. Aufruf: `python storage_probe.py`; die Ausgaben liegen in einem zeitgestempelten Unterordner von `probe_output/` neben dem Skript.
-
-**Achtung:** `04_admin_get_mediaspaces.json` enthält Zugangsdaten der Spaces. Nach Gebrauch löschen und nicht weitergeben.

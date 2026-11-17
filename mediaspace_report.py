@@ -30,7 +30,7 @@ from ms_state import (
 
 # CONFIG
 app_name = "mediaspace_report"
-app_version = "0.3.0"
+app_version = "0.4.0"
 unit_bytes = 2**40
 script_dir = Path(__file__).resolve().parent
 cred_path = script_dir / "cred.env"
@@ -227,43 +227,42 @@ def status_line(month: str, last_day: date | None, snapshot_count: int, closed: 
 
 # RUN
 
-def _configure_console() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is None:
-            continue
+class _FlowHandler(logging.Handler):
+    def __init__(self, message_handler: Callable[[str, str], None]) -> None:
+        super().__init__()
+        self.message_handler = message_handler
+
+    def emit(self, record: logging.LogRecord) -> None:
         try:
-            reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-        except (OSError, ValueError):
-            pass
+            level = "error" if record.levelno >= logging.ERROR else "info"
+            self.message_handler(level, self.format(record))
+        except Exception:
+            self.handleError(record)
 
 
-def _configure_logger() -> logging.Logger:
+def _configure_logger(message_handler: Callable[[str, str], None] | None = None) -> logging.Logger:
     logger = logging.getLogger("mediaspace_report")
     logger.setLevel(logging.INFO)
     logger.propagate = False
-    desired_path = str(log_path.resolve())
-    managed = [handler for handler in logger.handlers if getattr(handler, "_mediaspace_report_handler", False)]
-    configured = (
-        len(managed) == 2
-        and any(getattr(handler, "_mediaspace_report_kind", None) == "file" and handler.baseFilename == desired_path for handler in managed)
-        and any(getattr(handler, "_mediaspace_report_kind", None) == "console" for handler in managed)
-    )
-    if configured:
-        return logger
-
-    for handler in managed:
-        logger.removeHandler(handler)
-        handler.close()
+    for handler in logger.handlers[:]:
+        if getattr(handler, "_mediaspace_report_handler", False):
+            logger.removeHandler(handler)
+            handler.close()
 
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     file_handler = RotatingFileHandler(log_path, maxBytes=1_000_000, backupCount=2, encoding="utf-8")
-    console_handler = logging.StreamHandler()
-    for handler, kind in ((file_handler, "file"), (console_handler, "console")):
-        handler.setFormatter(formatter)
-        handler._mediaspace_report_handler = True
-        handler._mediaspace_report_kind = kind
-        logger.addHandler(handler)
+    file_handler.setFormatter(formatter)
+    file_handler._mediaspace_report_handler = True
+    logger.addHandler(file_handler)
+
+    if message_handler is None:
+        flow_handler = logging.StreamHandler()
+        flow_handler.setFormatter(formatter)
+    else:
+        flow_handler = _FlowHandler(message_handler)
+        flow_handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+    flow_handler._mediaspace_report_handler = True
+    logger.addHandler(flow_handler)
     return logger
 
 
@@ -350,18 +349,23 @@ def _try_write_month(
     path = report_path(report_dir, month)
     try:
         _write_month(state, phases, month, closed)
-    except PermissionError:
-        logger.warning("Bericht %s ist gesperrt – wird beim nächsten Lauf neu geschrieben", path.name)
-        return False, False
     except OSError:
         logger.exception("Bericht %s konnte nicht geschrieben werden", path.name)
         return False, True
     return True, False
 
 
-def run(now: datetime, fetch: Callable[[], list[dict]]) -> int:
+def run(
+    now: datetime,
+    fetch: Callable[[], list[dict]],
+    message_handler: Callable[[str, str], None] | None = None,
+    extra_args: str | None = None,
+) -> int:
     """Fetch, store and report the nightly Media Space snapshot."""
-    logger = _configure_logger()
+    logger = _configure_logger(message_handler)
+    logger.info("%s %s gestartet", app_name, app_version)
+    if extra_args:
+        logger.info("Zusatzargumente: %s", extra_args)
     try:
         state = load_state(state_path)
     except StateError as error:
@@ -389,9 +393,6 @@ def run(now: datetime, fetch: Callable[[], list[dict]]) -> int:
     report_dir_ready = True
     try:
         report_dir.mkdir(parents=True, exist_ok=True)
-    except PermissionError:
-        logger.warning("Berichtsordner %s ist gesperrt – Berichte werden beim nächsten Lauf geschrieben", report_dir)
-        report_dir_ready = False
     except OSError:
         logger.exception("Berichtsordner %s konnte nicht angelegt werden", report_dir)
         report_dir_ready = False
@@ -435,18 +436,27 @@ def run(now: datetime, fetch: Callable[[], list[dict]]) -> int:
 
 # MAIN
 
-def main() -> int:
-    """Configure command-line logging and execute one nightly run."""
-    _configure_console()
-    logger = logging.getLogger("mediaspace_report")
+def update_mediaspace_report(
+    message_handler: Callable[[str, str], None] | None = None,
+    extra_args: str | None = None,
+) -> int:
     try:
-        _configure_logger()
-        return run(datetime.now(ZoneInfo("Europe/Berlin")), lambda: fetch_spaces(cred_path, api_timeout))
+        return run(
+            datetime.now(ZoneInfo("Europe/Berlin")),
+            lambda: fetch_spaces(cred_path, api_timeout),
+            message_handler,
+            extra_args,
+        )
     except KeyboardInterrupt:
         return 130
     except Exception:
-        logger.exception("Unerwarteter Fehler im Mediaspace-Bericht")
+        logging.getLogger("mediaspace_report").exception("Unerwarteter Fehler im Mediaspace-Bericht")
         return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    return update_mediaspace_report(extra_args=" ".join(argv) or None)
 
 
 # EXEC

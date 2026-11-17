@@ -96,7 +96,7 @@ def test_month_close(paths):
     assert november.read_bytes() == november_bytes
 
 
-def test_locked_close_retried(paths, monkeypatch):
+def test_permission_error_on_close_retried(paths, monkeypatch):
     spaces = [_space("u1", "Iran Archive", 2 * T)]
     assert _run((2026, 11, 30), spaces) == 0
     original_write = report.write_workbook
@@ -110,10 +110,10 @@ def test_locked_close_retried(paths, monkeypatch):
         return original_write(path, *args, **kwargs)
 
     monkeypatch.setattr(report, "write_workbook", write_once_locked)
-    assert _run((2026, 12, 1), spaces) == 0
+    assert _run((2026, 12, 1), spaces) == 1
     state = json.loads((paths / "mediaspace_state.json").read_text(encoding="utf-8"))
     assert "2026-11" in state["months"]
-    assert "gesperrt" in (paths / "mediaspace_report.log").read_text(encoding="utf-8")
+    assert "konnte nicht geschrieben werden" in (paths / "mediaspace_report.log").read_text(encoding="utf-8")
 
     assert _run((2026, 12, 2), spaces) == 0
     workbook, sheet = _sheet(paths / "reports" / "Mediaspace-Report_2026-11.xlsx", "Bericht")
@@ -222,7 +222,7 @@ def test_main_without_cred(paths, monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
     try:
-        assert report.main() == 1
+        assert report.main([]) == 1
     finally:
         _close_logger_handlers()
 
@@ -310,7 +310,9 @@ def test_repeated_runs_do_not_duplicate_log_handlers(paths):
     assert len(first_handlers) == 2
 
     assert _run((2026, 11, 18), []) == 0
-    assert managed_handlers() == first_handlers
+    second_handlers = managed_handlers()
+    assert len(second_handlers) == 2
+    assert not set(first_handlers) & set(second_handlers)
 
 
 def test_lto_ignores_mean_from_before_latest_phase():
@@ -340,8 +342,70 @@ def test_report_directory_permission_error_is_retryable(paths, monkeypatch):
         return original_mkdir(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "mkdir", mkdir_with_report_lock)
-    assert _run((2026, 11, 17), []) == 0
-    assert "gesperrt" in (paths / "mediaspace_report.log").read_text(encoding="utf-8")
+    assert _run((2026, 11, 17), []) == 1
+    assert "konnte nicht angelegt werden" in (paths / "mediaspace_report.log").read_text(encoding="utf-8")
     assert (paths / "mediaspace_state.json").exists()
     assert not (paths / "reports").exists()
 
+
+
+def test_message_handler_receives_info(paths):
+    messages = []
+    assert report.run(
+        datetime(2026, 11, 17, 0, 1, tzinfo=BERLIN),
+        lambda: [_space("u1", "Iran Archive")],
+        lambda level, text: messages.append((level, text)),
+        "x=1",
+    ) == 0
+    assert any(level == "info" and "Snapshot 16.11.2026" in text for level, text in messages)
+    assert any("Zusatzargumente: x=1" in text for _, text in messages)
+    assert "Snapshot 16.11.2026" in (paths / "mediaspace_report.log").read_text(encoding="utf-8")
+    assert {level for level, _ in messages} <= {"info"}
+
+
+def test_message_handler_receives_errors(paths):
+    messages = []
+
+    def fail_fetch():
+        raise FetchError("Keine Antwort der Admin-API nach 1 s")
+
+    assert report.run(
+        datetime(2026, 11, 17, 0, 1, tzinfo=BERLIN),
+        fail_fetch,
+        lambda level, text: messages.append((level, text)),
+    ) == 1
+    assert any(level == "error" and "Keine Antwort" in text for level, text in messages)
+
+
+def test_failing_message_handler_does_not_break_run(paths):
+    def fail_handler(level, text):
+        raise RuntimeError("handler failed")
+
+    assert report.run(
+        datetime(2026, 11, 17, 0, 1, tzinfo=BERLIN),
+        lambda: [_space("u1", "Iran Archive")],
+        fail_handler,
+    ) == 0
+    assert "Snapshot" in (paths / "mediaspace_report.log").read_text(encoding="utf-8")
+
+
+def test_update_catches_unexpected_error(monkeypatch):
+    def fail_run(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(report, "run", fail_run)
+    assert report.update_mediaspace_report() == 1
+
+
+def test_main_passes_extra_args(monkeypatch):
+    calls = []
+
+    def fake_update(**kwargs):
+        calls.append(kwargs)
+        return 7
+
+    monkeypatch.setattr(report, "update_mediaspace_report", fake_update)
+    assert report.main(["--a", "b"]) == 7
+    assert calls[-1]["extra_args"] == "--a b"
+    assert report.main([]) == 7
+    assert calls[-1]["extra_args"] is None

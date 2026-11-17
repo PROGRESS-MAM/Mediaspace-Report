@@ -21,6 +21,12 @@
 - Teil 1: Zustandsdatei neben dem Skript; Berichtsordner fest im CONFIG-Bereich.
 - storage_probe: app_name = "storage_probe", app_version = "0.1.0"; mediaspace_report: app_name = "mediaspace_report", app_version = "0.1.0".
 
+- Automation-Paket (2026-11-17): Vorlage ES-All-Meta; Launcher mediaspace_report_launcher.py im Repo-Root, auf dem Worker unter /var/flow/automation/scripts/, Fachmodule im Unterordner mediaspace_report/.
+- Automation-Paket: State-JSON, Log und reports/ im Unterordner mediaspace_report/ (script_dir).
+- Automation-Paket: nur Linux; alle Windows-Bezüge und Windows-Funktionsteile entfernen.
+- Automation-Paket: Toolbox-Mini unverändert, nicht verwendet; ms_source behält die eigene Admin-Verbindung.
+- Automation-Paket: mediaspace_report app_version = "0.4.0"; Launcher app_name = "mediaspace_report_launcher", app_version = "1.0.0".
+
 ## Pakete
 | ID | Paket | Dateien | Abhängig von | Modus | Review | Status |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -34,6 +40,9 @@
 | T8 | Excel-Arbeitsmappe (Bericht, Rohdaten, LTO-Bestand), 24 Berichte | ms_excel.py, tests/test_ms_excel.py | – | direct | B | fertig |
 | T9 | Phasen/Reaktivierung, Bericht- und Rohdatenzeilen, Statuszeile; CSV entfällt | mediaspace_report.py, tests/test_mediaspace_report.py | T5–T8 | direct | B | fertig |
 | T10 | Ablauf: Lauf, Monatsabschluss, LTO, Log, Aufbewahrung, README | mediaspace_report.py, tests/test_mediaspace_report.py, README.md | T9 | plan-first | B | fertig |
+| T11 | Einstieg update_mediaspace_report/main(argv), Flow-Meldungen, Windows-Teile entfernen | mediaspace_report.py, tests/test_mediaspace_run.py | T10 | direct | B | fertig |
+| T12 | Launcher Flow Automation/Standalone | mediaspace_report_launcher.py, tests/test_launcher.py | T11 (Schnittstelle) | direct | A | fertig |
+| T13 | README Worker-Deploy, requirements.txt | README.md, requirements.txt | – | CodeZilla | – | fertig |
 
 ## Entscheidungen
 - T1: Space-Name über backup_id aus get_backups(); ohne Treffer space_name der Suche – space_name der Suche ist ein interner Kurzname.
@@ -101,3 +110,9 @@
 - T10: Fehler beim Laden des Zustands, bei der API oder beim Snapshot: Exit 1, nichts geschrieben außer dem Log.
 - T10: README neu: nur storage_probe.py und mediaspace_report.py (ark_probe/ark_sources_probe nicht mehr im Repo); Zeitplan über Windows-Aufgabenplanung 00:01.
 - T10: Reviewer: gesperrter Berichtsordner (PermissionError beim Anlegen) wie gesperrter Bericht – Warnung, Zustand gespeichert, Berichte beim nächsten Lauf.
+- T11: Sonderbehandlung PermissionError (gesperrte Excel-Datei unter Windows) entfällt – unter Linux ein echter Rechtefehler: Exit 1, Monat bleibt im Zustand, nächster Lauf schreibt neu.
+- T11: _configure_console (UTF-8 für Windows-Konsolen) entfällt; tzdata entfällt in requirements.
+- T11: Flow-Meldungen: ERROR und höher → "error", sonst "info".
+- T12: Launcher folgt metadata_file_launcher.py aus ES-All-Meta; Exit-Code ≠ 0 → error_and_exit.
+- T13: README ohne storage_probe-Abschnitt – storage_probe.py ist nicht mehr im Repo; tests/test_storage_probe.py ist verwaist und nicht Teil der Abnahme.
+- T13: Repo bleibt flach wie die Vorlage; die Unterordner-Struktur entsteht beim Kopieren auf den Worker.
