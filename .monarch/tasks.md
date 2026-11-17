@@ -15,7 +15,10 @@
 - Teil 1: Projektzuordnung über Namensendung: Archiv, Archive, Render, Onlining, Rushes, Project, Projekt.
 - Teil 1: Zugeordnete Projekte: eine Zeile je Projekt, Spalte mit Wert "Looks", sortiert nach Name.
 - Teil 1: Spaces ohne Zuordnung: eine Zeile je Space, ohne "Looks", absteigend nach Größe.
-- Teil 1: Storage-Zugriff über FlowAPI.EditShare (editshare-flow-api), cred.env mit FLOW_HOST, FLOW_USER, FLOW_PASSWORD; TOOLBOX unterstützt "storage" nicht.
+- Teil 1: Datenquelle FlowAPI.Admin.get_mediaspaces(as_admin=True) (editshare-flow-api), cred.env mit FLOW_HOST, FLOW_USER, FLOW_PASSWORD; Felder uuid, name, created, removed, mount_used_bytes. Storage-API liefert 401.
+- Teil 1: Snapshot jede Nacht um 00:01; Bericht direkt danach aktualisiert; der Lauf am 01. um 00:01 schließt den Vormonat ab und legt den neuen Monatsbericht an.
+- Teil 1: Bericht als Excel; Blatt Rohdaten mit jedem eingeflossenen Space und der ermittelten Projektzuordnung; Blatt LTO-Bestand.
+- Teil 1: Zustandsdatei neben dem Skript; Berichtsordner fest im CONFIG-Bereich.
 - storage_probe: app_name = "storage_probe", app_version = "0.1.0"; mediaspace_report: app_name = "mediaspace_report", app_version = "0.1.0".
 
 ## Pakete
@@ -26,7 +29,9 @@
 | T3 | Testskript weitere Ark-Quellen mit Zeitlimit je Aufruf | ark_sources_probe.py, tests/test_ark_sources_probe.py | T2 | direct | B | fertig |
 | T4 | Testskript Rohantworten Storage-Spaces | storage_probe.py, tests/test_storage_probe.py | – | direct | B | fertig |
 | T5 | Projektzuordnung, Zusammenfassung, Sortierung, CSV | mediaspace_report.py, tests/test_mediaspace_report.py | – | direct | B | fertig |
-| T6 | Nächtliche Erfassung, Fortschreibung, Aufbewahrung, README | mediaspace_report.py, tests/test_mediaspace_report.py, README.md | T4 (Martins Lauf), T5 | plan-first | B | offen |
+| T6 | Snapshot, Zustandsdatei, Durchschnitt, Interpolation | mediaspace_report.py, tests/test_mediaspace_report.py | T5 | plan-first | B | geparkt |
+| T7 | Excel-Bericht (Bericht, Rohdaten), Monatsabschluss, 24 Berichte | mediaspace_report.py, tests/test_mediaspace_report.py | T6 | plan-first | B | geparkt |
+| T8 | Reaktivierung, LTO-Bestand, README | mediaspace_report.py, tests/test_mediaspace_report.py, README.md | T7 | plan-first | B | geparkt |
 
 ## Entscheidungen
 - T1: Space-Name über backup_id aus get_backups(); ohne Treffer space_name der Suche – space_name der Suche ist ein interner Kurzname.
@@ -66,3 +71,17 @@
 - T6: Zustand je Monat in eigener Datei neben dem CSV, wird mit dem Bericht gelöscht; Anfangsdatum der Projekte wird in den Folgemonat übernommen – Daten bleiben bei in Excel geöffneter CSV erhalten.
 - T6: Umbenannter Space gilt als gelöscht und neu angelegt.
 - T4/T5: Gesamte Testsuite scheitert an alten Tests für die nicht mehr vorhandenen ark_probe.py und ark_sources_probe.py – nicht Teil der Abnahme, Martin entscheidet über die alten Tests.
+- Teil 1 (Martin, 2026-11-17): Durchschnitt = Summe der Snapshot-Werte / Anzahl der Snapshots im Monat; eine fehlende Nacht zählt nicht mit; fehlen mehrere Nächte, wird linear vom letzten Snapshot aus interpoliert und im Bericht als interpoliert gekennzeichnet. Ersetzt T6 „Wert der vorherigen Nacht“.
+- Teil 1 (Martin, 2026-11-17): Ein im Monat gelöschtes Projekt bleibt bis zum Monatsabschluss im Bericht, im Folgebericht nicht mehr.
+- Teil 1 (Martin, 2026-11-17): Excel statt CSV – ersetzt das CSV-Ausgabeformat aus T5; parse_project und build_rows bleiben.
+- T6: Ein Space, der in einem Snapshot fehlt, zählt dort mit 0 – Spaces, die nur einen Teil des Monats existieren, zählen anteilig.
+- T6: Der Snapshot vom 01. um 00:01 gilt für den letzten Tag des Vormonats; der neue Monat beginnt mit dem Snapshot vom 02.
+- T6: Interpolation je Space zwischen letztem und aktuellem Snapshot; Existenz an den fehlenden Tagen aus created/removed; Tage werden ihrem Kalendermonat zugeordnet, ein verpasster Monatsabschluss wird beim nächsten Lauf nachgeholt.
+- T6: Kennung eines Space = uuid – Namen werden nach dem Löschen erneut vergeben.
+- T6: Zeitstempel der API (UTC) werden in Europe/Berlin umgerechnet.
+- T7: Ist die Excel-Datei gesperrt, bleibt der Zustand erhalten und der nächste Lauf schreibt den Bericht neu; ein noch nicht geschriebener Abschluss wird nachgeholt.
+- T7: Zugangsdaten (credentials) der API-Antwort werden nie in Bericht, Rohdaten oder Zustandsdatei übernommen.
+- T8: Projektzuordnung nur über gleichen Projektnamen (ohne Groß-/Kleinschreibung), keine unscharfe Suche nach Endungen wie _2 – sonst falsche Gruppen, z. B. „ddr 72“, „1989“.
+- T8: Reaktivierung = mindestens ein ganzer Tag, an dem kein Space des Projekts existierte (aus created/removed).
+- T8: LTO-Bestand nur für Looks-Projekte, deren letzter Space gelöscht ist; laufend fortgeführt; bei Reaktivierung bleibt der Eintrag bestehen.
+- Offen (Martin): Anfangsdatum bei reaktivierten Projekten; Wert im LTO-Bestand; Aktualität von mount_used_bytes.
