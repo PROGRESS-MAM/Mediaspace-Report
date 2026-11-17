@@ -1,8 +1,8 @@
 # Mediaspace-Report
 
-## ark_probe.py – Testskript für archivierte Spaces
+## mediaspace_report.py
 
-Liest aus Ark, welche Media Spaces auf Tape bzw. Disk gesichert sind und wie groß sie sind. Ändert nichts in Ark.
+Das Skript erstellt aus nächtlichen Snapshots monatliche Excel-Berichte zur Speicherbelegung der Media Spaces je Projekt. Es schließt den Vormonat ab, führt den LTO-Bestand für Looks-Projekte und bereinigt ältere Berichte.
 
 ### Installation
 
@@ -10,77 +10,58 @@ Python 3.11 oder neuer.
 
 ```console
 pip config set global.extra-index-url https://artifacts.editshare.com/artifactory/api/pypi/editshare-pypi-public/simple
-pip install "toolbox @ git+https://github.com/PROGRESS-MAM/TOOLBOX.git@main"
-pip install "ArkAPI @ git+https://github.com/PROGRESS-MAM/ES-Ark-API.git@main"
+pip install editshare-flow-api python-dotenv openpyxl tzdata
 ```
 
-`cred.env` neben dem Skript anlegen (nicht committen):
+`cred.env` neben dem Skript anlegen und nicht committen:
 
 ```dotenv
-ARK_HOST=<host>
-ARK_USER=<user>
-ARK_PASSWORD=<password>
+FLOW_HOST=<host>
+FLOW_USER=<user>
+FLOW_PASSWORD=<password>
 ```
 
 ### Verwendung
 
 ```console
-python ark_probe.py
+python mediaspace_report.py
 ```
 
-In VS Code: `ark_probe.py` öffnen und „Python-Datei ausführen“ (Ausgabe im Terminal) oder den Befehl oben im Terminal starten.
-
-Die Konsole zeigt die Schritte `[1/4]` bis `[4/4]`, beim Lesen aller Dateien den Fortschritt je Seite und am Ende die Kurzfassung. `summary.txt` wird nach jedem Schritt und jeder Seite aktualisiert und zeigt auch nach einem Abbruch den letzten Stand.
-
-Abbrechen mit `Strg+C`: Bereits gelesene Daten bleiben gespeichert. Bei einem Fehler steht die Ursache in `summary.txt` und die vollständige Meldung in `traceback.txt`.
-
-### Config (Kopf von `ark_probe.py`)
-
-| Eintrag | Standard | Bedeutung |
-| --- | --- | --- |
-| `cred_path` | `cred.env` neben dem Skript | Zugangsdaten für Ark |
-| `out_root` | `probe_output` neben dem Skript | Ablage, je Lauf ein Unterordner `<YYYY-MM-DD_HHMM>` |
-| `page_limit` | `10000` | Dateien je Suchanfrage, höchstens 10000 |
-| `max_pages` | `1000` | Höchstzahl an Suchanfragen je Lauf |
-
-### Ergebnisdateien
-
-| Datei | Inhalt |
-| --- | --- |
-| `summary.txt` | Kurzfassung des Laufs mit Status, Schritt und Fehler |
-| `traceback.txt` | Nur bei Fehler: vollständige Fehlermeldung |
-| `backups.json`, `backups.csv` | Alle Backups aus Ark |
-| `search_sample.json` | Erste Suchantwort mit einem Treffer |
-| `files.csv` | Alle gefundenen Dateien |
-| `sizes_by_backup.csv` | Dateien und Größe je Backup |
-| `sizes_by_space.csv` | Größe je Space und Ablage (tape/disk), alle Treffer und jede Datei einmal |
-| `backup_contents_sample.json` | Inhalt eines Tape-Backups als Rohantwort |
-
-CSV: Trennzeichen `;`, TB = 10^12 Byte mit Dezimalkomma.
-
-## ark_sources_probe.py – Testskript für weitere Ark-Quellen
-
-Fragt nacheinander weitere Ark-Endpunkte ab, die eine Größe liefern könnten, und speichert jede Rohantwort. Ändert nichts in Ark. Jeder Aufruf hat ein Zeitlimit; hängt ein Aufruf, geht es mit dem nächsten weiter.
-
-Installation und `cred.env` wie bei `ark_probe.py`.
+Für den nächtlichen Lauf unter Windows in der Aufgabenplanung täglich um 00:01 Uhr einen Task anlegen, zum Beispiel:
 
 ```console
-python ark_sources_probe.py
+schtasks /Create /SC DAILY /ST 00:01 /TN "Mediaspace-Report" /TR "\"C:\Pfad\zu\python.exe\" \"C:\Pfad\zu\mediaspace_report.py\""
 ```
 
-Die Konsole zeigt die Schritte `[1/10]` bis `[10/10]` mit Ergebnis und Dauer. Abbrechen mit `Strg+C`: Bisherige Ergebnisse bleiben gespeichert.
-
-### Config (Kopf von `ark_sources_probe.py`)
+### Config (Kopf von `mediaspace_report.py`)
 
 | Eintrag | Standard | Bedeutung |
 | --- | --- | --- |
-| `call_timeout` | `180` | Sekunden je Ark-Aufruf, danach gilt der Schritt als `timeout` |
+| `app_name` | `mediaspace_report` | Anwendungsname |
+| `app_version` | `0.3.0` | Skriptversion |
+| `unit_bytes` | `2**40` | Byte je TiB |
+| `script_dir` | Ordner des Skripts | Basisordner |
+| `cred_path` | `script_dir / "cred.env"` | Zugangsdaten |
+| `state_path` | `script_dir / "mediaspace_state.json"` | Snapshot-Zustand |
+| `log_path` | `script_dir / "mediaspace_report.log"` | Laufprotokoll |
+| `report_dir` | `script_dir / "reports"` | Hier den festen Berichtsordner eintragen (Standard: reports neben dem Skript) |
+| `api_timeout` | `120` | Zeitlimit für den Abruf in Sekunden |
+| `keep_reports` | `24` | Zahl der zu behaltenden Monatsberichte |
 
-`cred_path` und `out_root` wie bei `ark_probe.py`. Je Lauf ein Unterordner `probe_output/<YYYY-MM-DD_HHMM>_sources/`.
+### Dateien und Hinweise
 
-### Ergebnisdateien
+- `reports/Mediaspace-Report_YYYY-MM.xlsx`: Monatsbericht mit den Blättern `Bericht`, `Rohdaten` und `LTO-Bestand`.
+- `mediaspace_state.json`: gespeicherte Snapshots und LTO-Daten.
+- `mediaspace_report.log`: Laufmeldungen.
+- Alle Größenwerte sind in TiB.
+- Der Bericht bleibt vorläufig bis zum Lauf am 01. des Folgemonats um 00:01 Uhr.
+- Ein Snapshot um 00:01 Uhr gilt für den Vortag.
+- Fehlt eine Nacht, zählt sie nicht; fehlen mehrere Nächte, wird interpoliert und der Wert markiert.
+- Der LTO-Bestand umfasst nur Looks-Projekte und beginnt erst ab dem Start der Erfassung.
+- Der erste Monat enthält nur Snapshots ab dem ersten Lauf.
 
-| Datei | Inhalt |
-| --- | --- |
-| `sources_summary.csv` | Je Schritt: Aufruf, Status, HTTP-Code, Dauer, Aufbau der Antwort, gefundene Größenfelder; nach jedem Schritt aktualisiert |
-| `NN_<aufruf>.json` | Rohantwort je Schritt |
+## storage_probe.py
+
+Das Skript ist ein nur lesendes Testskript für Storage-Abfragen. Aufruf: `python storage_probe.py`; die Ausgaben liegen in einem zeitgestempelten Unterordner von `probe_output/` neben dem Skript.
+
+**Achtung:** `04_admin_get_mediaspaces.json` enthält Zugangsdaten der Spaces. Nach Gebrauch löschen und nicht weitergeben.

@@ -1,17 +1,44 @@
 # IMPORTS
-import csv
-import os
+import calendar
+import logging
 import re
 import sys
-import tempfile
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Any, Callable, Iterable
+from zoneinfo import ZoneInfo
+
+from ms_excel import LtoLine, RawLine, ReportLine, prune_reports, report_path, write_workbook
+from ms_source import FetchError, fetch_spaces, parse_spaces
+from ms_state import (
+    SpaceTotal,
+    StateError,
+    add_snapshot,
+    closable_months,
+    drop_month,
+    group_snapshot_mean,
+    last_snapshot_day,
+    load_state,
+    month_totals,
+    save_state,
+    snapshot_count,
+    snapshot_day,
+)
 
 
 # CONFIG
 app_name = "mediaspace_report"
-app_version = "0.1.0"
+app_version = "0.3.0"
+unit_bytes = 2**40
+script_dir = Path(__file__).resolve().parent
+cred_path = script_dir / "cred.env"
+state_path = script_dir / "mediaspace_state.json"
+log_path = script_dir / "mediaspace_report.log"
+report_dir = script_dir / "reports"
+api_timeout = 120
+keep_reports = 24
 
 
 # FUNC
@@ -34,6 +61,15 @@ class ReportRow:
     start: date | None
     end: date | None
     owner: str
+
+
+@dataclass(frozen=True)
+class Phase:
+    """A continuous project activation period and its member space UUIDs."""
+
+    start: date
+    end: date | None
+    uuids: frozenset[str]
 
 
 _PROJECT_PATTERN = re.compile(r"^(.+?)[ _-]+(archiv|archive|render|onlining|rushes|project|projekt)$", re.IGNORECASE)
@@ -79,45 +115,338 @@ def build_rows(spaces: list[SpaceMonth]) -> list[ReportRow]:
     return owned_rows + unowned_rows
 
 
-def write_report_csv(path: Path, rows: list[ReportRow], days_in_month: int) -> None:
-    """Write the report as UTF-8-BOM CSV using an atomic replacement."""
-    temp_path: Path | None = None
+def project_phases(spaces: Iterable[Any]) -> dict[str, list[Phase]]:
+    """Group project spaces into activation phases, merging intervals with gaps under two days."""
+    intervals: dict[str, list[tuple[date, date | None, str]]] = {}
+    for space in spaces:
+        project = parse_project(space.name)
+        if project is None:
+            continue
+        intervals.setdefault(project.casefold(), []).append(
+            (space.created.date(), space.removed.date() if space.removed else None, space.uuid)
+        )
+
+    result: dict[str, list[Phase]] = {}
+    for project, project_intervals in intervals.items():
+        project_intervals.sort(key=lambda interval: (interval[0], interval[2]))
+        phases: list[Phase] = []
+        for start, end, uuid in project_intervals:
+            if not phases or (
+                phases[-1].end is not None and start - phases[-1].end >= timedelta(days=2)
+            ):
+                phases.append(Phase(start, end, frozenset({uuid})))
+                continue
+            previous = phases[-1]
+            merged_end = None if previous.end is None or end is None else max(previous.end, end)
+            phases[-1] = Phase(previous.start, merged_end, previous.uuids | {uuid})
+        result[project] = sorted(phases, key=lambda phase: phase.start)
+    return result
+
+
+def phase_for_month(phases: list[Phase], month: str) -> Phase | None:
+    """Return the latest phase that started on or before the month's final day."""
+    year, month_number = (int(value) for value in month.split("-"))
+    last_day = date(year, month_number, calendar.monthrange(year, month_number)[1])
+    eligible = [phase for phase in phases if phase.start <= last_day]
+    return max(eligible, key=lambda phase: phase.start) if eligible else None
+
+
+def month_report(
+    totals: list[SpaceTotal],
+    snapshot_count: int,
+    phases: dict[str, list[Phase]],
+    month: str,
+) -> tuple[list[ReportLine], list[RawLine]]:
+    """Build project summary and per-space raw lines for a monthly snapshot report."""
+    if snapshot_count == 0:
+        return [], []
+
+    rows = build_rows([
+        SpaceMonth(
+            total.name,
+            total.value_sum,
+            total.created.date() if total.created else None,
+            total.removed.date() if total.removed else None,
+        )
+        for total in totals
+    ])
+    report_lines: list[ReportLine] = []
+    for row in rows:
+        if row.owner:
+            phase = phase_for_month(phases.get(row.name.casefold(), []), month)
+            start, end = (phase.start, phase.end) if phase is not None else (row.start, row.end)
+            associated = [
+                total for total in totals
+                if (parse_project(total.name) or "").casefold() == row.name.casefold()
+                and parse_project(total.name) is not None
+            ]
+        else:
+            start, end = row.start, row.end
+            associated = [
+                total for total in totals
+                if parse_project(total.name) is None and total.name == row.name
+            ]
+        note = "interpoliert" if any(total.interpolated for total in associated) else ""
+        tib = row.byte_days / snapshot_count / unit_bytes
+        report_lines.append(ReportLine(row.name, tib, start, end, row.owner, note))
+
+    raw_projects: list[tuple[str, str, RawLine]] = []
+    raw_unassigned: list[tuple[str, RawLine]] = []
+    for total in totals:
+        project = parse_project(total.name)
+        line = RawLine(
+            total.name,
+            total.uuid,
+            project or "",
+            "Looks" if project else "",
+            total.created.date() if total.created else None,
+            total.removed.date() if total.removed else None,
+            total.snapshots,
+            total.value_sum / snapshot_count / unit_bytes,
+            "interpoliert" if total.interpolated else "",
+        )
+        if project:
+            raw_projects.append((project.casefold(), total.name.casefold(), line))
+        else:
+            raw_unassigned.append((total.name.casefold(), line))
+
+    raw_projects.sort(key=lambda item: (item[0], item[1]))
+    raw_unassigned.sort(key=lambda item: item[0])
+    raw_lines = [item[2] for item in raw_projects] + [item[1] for item in raw_unassigned]
+    return report_lines, raw_lines
+
+
+def status_line(month: str, last_day: date | None, snapshot_count: int, closed: bool) -> str:
+    """Format the monthly report status in German date notation."""
+    year, month_number = (int(value) for value in month.split("-"))
+    status_month = f"{month_number:02d}.{year:04d}"
+    status_day = last_day.strftime("%d.%m.%Y") if last_day else "–"
+    completion = "abgeschlossen" if closed else "vorläufig"
+    return f"Monat {status_month} · Stand {status_day} · {snapshot_count} Snapshots · {completion}"
+
+
+# RUN
+
+def _configure_console() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+        except (OSError, ValueError):
+            pass
+
+
+def _configure_logger() -> logging.Logger:
+    logger = logging.getLogger("mediaspace_report")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    desired_path = str(log_path.resolve())
+    managed = [handler for handler in logger.handlers if getattr(handler, "_mediaspace_report_handler", False)]
+    configured = (
+        len(managed) == 2
+        and any(getattr(handler, "_mediaspace_report_kind", None) == "file" and handler.baseFilename == desired_path for handler in managed)
+        and any(getattr(handler, "_mediaspace_report_kind", None) == "console" for handler in managed)
+    )
+    if configured:
+        return logger
+
+    for handler in managed:
+        logger.removeHandler(handler)
+        handler.close()
+
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    file_handler = RotatingFileHandler(log_path, maxBytes=1_000_000, backupCount=2, encoding="utf-8")
+    console_handler = logging.StreamHandler()
+    for handler, kind in ((file_handler, "file"), (console_handler, "console")):
+        handler.setFormatter(formatter)
+        handler._mediaspace_report_handler = True
+        handler._mediaspace_report_kind = kind
+        logger.addHandler(handler)
+    return logger
+
+
+def _month_end(month: str) -> date:
+    year, month_number = (int(value) for value in month.split("-"))
+    return date(year, month_number, calendar.monthrange(year, month_number)[1])
+
+
+def _update_lto(state: dict, phases: dict[str, list[Phase]], month: str) -> None:
+    extra = state.setdefault("extra", {})
+    project_means = extra.setdefault("project_means", {})
+    lto = extra.setdefault("lto", [])
+    grouped: dict[str, list[Any]] = {}
+    for total in month_totals(state, month):
+        project = parse_project(total.name)
+        if project is not None:
+            grouped.setdefault(project.casefold(), []).append((total, project))
+
+    for key, totals in grouped.items():
+        uuids = {total.uuid for total, _ in totals}
+        mean = group_snapshot_mean(state, month, uuids)
+        if mean is None:
+            continue
+        name = min(totals, key=lambda item: item[0].name.casefold())[1]
+        project_means[key] = {"month": month, "tib": mean / unit_bytes, "name": name}
+
+    month_end = _month_end(month)
+    for key, mean in project_means.items():
+        key_phases = phases.get(key, [])
+        if not key_phases:
+            continue
+        phase = key_phases[-1]
+        if phase.end is None or phase.end > month_end or mean["month"] < phase.start.strftime("%Y-%m"):
+            continue
+        start_text = phase.start.isoformat()
+        if any(item["key"] == key and item["start"] == start_text for item in lto):
+            continue
+        lto.append({
+            "key": key,
+            "project": mean["name"],
+            "tib": mean["tib"],
+            "start": start_text,
+            "end": phase.end.isoformat(),
+            "month": phase.end.strftime("%m.%Y"),
+        })
+
+
+def _lto_lines(state: dict) -> list[LtoLine]:
+    entries = state.get("extra", {}).get("lto", [])
+    lines = [
+        LtoLine(
+            item["project"],
+            item["tib"],
+            date.fromisoformat(item["start"]),
+            date.fromisoformat(item["end"]),
+            item["month"],
+            "Looks",
+        )
+        for item in entries
+    ]
+    return sorted(lines, key=lambda line: (line.project.casefold(), line.start))
+
+
+def _write_month(state: dict, phases: dict[str, list[Phase]], month: str, closed: bool) -> None:
+    totals = month_totals(state, month)
+    count = snapshot_count(state, month)
+    report_lines, raw_lines = month_report(totals, count, phases, month)
+    write_workbook(
+        report_path(report_dir, month),
+        status_line(month, last_snapshot_day(state, month), count, closed),
+        report_lines,
+        raw_lines,
+        _lto_lines(state),
+    )
+
+
+def _try_write_month(
+    logger: logging.Logger,
+    state: dict,
+    phases: dict[str, list[Phase]],
+    month: str,
+    closed: bool,
+) -> tuple[bool, bool]:
+    path = report_path(report_dir, month)
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8-sig",
-            newline="",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temp_file:
-            temp_path = Path(temp_file.name)
-            writer = csv.writer(temp_file, delimiter=";")
-            writer.writerow(["Name", "TB", "Anfangsdatum", "Enddatum", "Zuordnung"])
-            for row in rows:
-                writer.writerow(
-                    [
-                        row.name,
-                        f"{row.byte_days / days_in_month / 10**12:.4f}".replace(".", ","),
-                        row.start.strftime("%d.%m.%Y") if row.start else "",
-                        row.end.strftime("%d.%m.%Y") if row.end else "",
-                        row.owner,
-                    ]
-                )
-        os.replace(temp_path, path)
-    finally:
-        if temp_path is not None:
-            try:
-                temp_path.unlink()
-            except FileNotFoundError:
-                pass
+        _write_month(state, phases, month, closed)
+    except PermissionError:
+        logger.warning("Bericht %s ist gesperrt – wird beim nächsten Lauf neu geschrieben", path.name)
+        return False, False
+    except OSError:
+        logger.exception("Bericht %s konnte nicht geschrieben werden", path.name)
+        return False, True
+    return True, False
+
+
+def run(now: datetime, fetch: Callable[[], list[dict]]) -> int:
+    """Fetch, store and report the nightly Media Space snapshot."""
+    logger = _configure_logger()
+    try:
+        state = load_state(state_path)
+    except StateError as error:
+        logger.error("%s", error)
+        return 1
+
+    try:
+        raw = fetch()
+    except FetchError as error:
+        logger.error("%s", error)
+        return 1
+
+    try:
+        spaces = parse_spaces(raw)
+        day = snapshot_day(now)
+        add_snapshot(state, day, spaces)
+    except StateError as error:
+        logger.error("%s", error)
+        return 1
+
+    phases = project_phases(spaces)
+    next_day = day + timedelta(days=1)
+    open_month = next_day.strftime("%Y-%m") if next_day.day == 1 else day.strftime("%Y-%m")
+    write_failed = False
+    report_dir_ready = True
+    try:
+        report_dir.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        logger.warning("Berichtsordner %s ist gesperrt – Berichte werden beim nächsten Lauf geschrieben", report_dir)
+        report_dir_ready = False
+    except OSError:
+        logger.exception("Berichtsordner %s konnte nicht angelegt werden", report_dir)
+        report_dir_ready = False
+        write_failed = True
+
+    closed_months: list[str] = []
+    if report_dir_ready:
+        for month in closable_months(state, day):
+            _update_lto(state, phases, month)
+            written, failed = _try_write_month(logger, state, phases, month, True)
+            write_failed = write_failed or failed
+            if written:
+                drop_month(state, month)
+                closed_months.append(month)
+
+        written, failed = _try_write_month(logger, state, phases, open_month, False)
+        write_failed = write_failed or failed
+
+    try:
+        save_state(state_path, state)
+    except OSError:
+        logger.exception("Zustand konnte nicht gespeichert werden: %s", state_path)
+        write_failed = True
+
+    try:
+        prune_reports(report_dir, keep_reports)
+    except OSError:
+        logger.warning("Berichte in %s konnten nicht bereinigt werden", report_dir, exc_info=True)
+
+    active_spaces = sum(space.removed is None for space in spaces)
+    closed_text = ", ".join(closed_months) if closed_months else "–"
+    logger.info(
+        "Snapshot %s: %s aktive Spaces, Bericht %s aktualisiert, abgeschlossen: %s",
+        day.strftime("%d.%m.%Y"),
+        active_spaces,
+        open_month,
+        closed_text,
+    )
+    return 1 if write_failed else 0
 
 
 # MAIN
+
 def main() -> int:
-    """Run the command-line entry point."""
-    return 0
+    """Configure command-line logging and execute one nightly run."""
+    _configure_console()
+    logger = logging.getLogger("mediaspace_report")
+    try:
+        _configure_logger()
+        return run(datetime.now(ZoneInfo("Europe/Berlin")), lambda: fetch_spaces(cred_path, api_timeout))
+    except KeyboardInterrupt:
+        return 130
+    except Exception:
+        logger.exception("Unerwarteter Fehler im Mediaspace-Bericht")
+        return 1
 
 
 # EXEC

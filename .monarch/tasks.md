@@ -29,9 +29,11 @@
 | T3 | Testskript weitere Ark-Quellen mit Zeitlimit je Aufruf | ark_sources_probe.py, tests/test_ark_sources_probe.py | T2 | direct | B | fertig |
 | T4 | Testskript Rohantworten Storage-Spaces | storage_probe.py, tests/test_storage_probe.py | – | direct | B | fertig |
 | T5 | Projektzuordnung, Zusammenfassung, Sortierung, CSV | mediaspace_report.py, tests/test_mediaspace_report.py | – | direct | B | fertig |
-| T6 | Snapshot, Zustandsdatei, Durchschnitt, Interpolation | mediaspace_report.py, tests/test_mediaspace_report.py | T5 | plan-first | B | geparkt |
-| T7 | Excel-Bericht (Bericht, Rohdaten), Monatsabschluss, 24 Berichte | mediaspace_report.py, tests/test_mediaspace_report.py | T6 | plan-first | B | geparkt |
-| T8 | Reaktivierung, LTO-Bestand, README | mediaspace_report.py, tests/test_mediaspace_report.py, README.md | T7 | plan-first | B | geparkt |
+| T6 | Datenquelle: Admin-Abfrage mit Zeitlimit, Umwandlung in SpaceInfo | ms_source.py, tests/test_ms_source.py | T4 | plan-first | B | fertig |
+| T7 | Zustandsdatei, Snapshots, Interpolation, Monatssummen | ms_state.py, tests/test_ms_state.py | – | direct | B | fertig |
+| T8 | Excel-Arbeitsmappe (Bericht, Rohdaten, LTO-Bestand), 24 Berichte | ms_excel.py, tests/test_ms_excel.py | – | direct | B | fertig |
+| T9 | Phasen/Reaktivierung, Bericht- und Rohdatenzeilen, Statuszeile; CSV entfällt | mediaspace_report.py, tests/test_mediaspace_report.py | T5–T8 | direct | B | fertig |
+| T10 | Ablauf: Lauf, Monatsabschluss, LTO, Log, Aufbewahrung, README | mediaspace_report.py, tests/test_mediaspace_report.py, README.md | T9 | plan-first | B | fertig |
 
 ## Entscheidungen
 - T1: Space-Name über backup_id aus get_backups(); ohne Treffer space_name der Suche – space_name der Suche ist ein interner Kurzname.
@@ -56,9 +58,6 @@
 - Teil 1 (Martin, 2026-11-16): Jede Nacht ein kurzer Erfassungslauf, am 01. zusätzlich der Monatsbericht über den Vormonat (01. bis letzter Tag).
 - Teil 1 (Martin, 2026-11-16): Belegte TB je Projekt und Monat = Durchschnitt der Tageswerte im Monat.
 - Teil 1 (Martin, 2026-11-16): Je Projekt Anfangsdatum (Erstellung erster Space) und Enddatum (Löschung letzter Space); nur aktuell belegte TB; Verkleinerung zum Ende hin auch über die Monatsgrenze über Tageswerte abbilden.
-- Teil 1: Ausgabe als CSV wie Teil 2 (`;`, `utf-8-sig`, TB = 10^12 Byte, Dezimalkomma) – einheitlich mit den Testskripten.
-- Teil 1: Enddatum = letzter Tag, an dem der Space erfasst wurde; leer, solange ein Space des Projekts existiert – der Löschzeitpunkt ist nur über die nächtliche Erfassung erkennbar.
-- Teil 1: Anfangsdatum aus dem Erstellungsdatum in EditShare, sofern geliefert – Spaces von vor dem ersten Erfassungslauf.
 - Teil 1 (Martin, 2026-11-16): Keine Tagesberichte; der Monatsbericht wird jede Nacht fortgeschrieben, höchstens 24 Berichte.
 - Teil 1 (Martin, 2026-11-16): Teiler = alle Kalendertage des Monats; Spaces, die nur einen Teil des Monats existieren, zählen anteilig.
 - T4: Feldnamen für Belegung, Erstellungsdatum und Kennung der Spaces unbekannt – zuerst Rohantworten der Storage-API holen, Martin startet den Lauf.
@@ -66,22 +65,39 @@
 - T5: Reihenfolge: zuerst alle Looks-Projekte nach Name, dann Spaces ohne Zuordnung nach Größe.
 - T5: Spalten Name;TB;Anfangsdatum;Enddatum;Zuordnung; Datum TT.MM.JJJJ; Anfangs-/Enddatum auch für Spaces ohne Zuordnung.
 - T5: Enddatum eines Projekts leer, solange einer seiner Spaces existiert.
-- T6: Ein Messwert gilt für den Vortag (Lauf nach Mitternacht); der Lauf am 01. schließt den Vormonat ab.
-- T6: Fehlt eine Nacht, zählt für Spaces, die davor und danach erfasst wurden, der Wert der vorherigen Nacht – sonst fehlen abrechenbare Tage.
-- T6: Zustand je Monat in eigener Datei neben dem CSV, wird mit dem Bericht gelöscht; Anfangsdatum der Projekte wird in den Folgemonat übernommen – Daten bleiben bei in Excel geöffneter CSV erhalten.
-- T6: Umbenannter Space gilt als gelöscht und neu angelegt.
+- T7: Ein Messwert gilt für den Vortag (Lauf nach Mitternacht); der Lauf am 01. schließt den Vormonat ab.
 - T4/T5: Gesamte Testsuite scheitert an alten Tests für die nicht mehr vorhandenen ark_probe.py und ark_sources_probe.py – nicht Teil der Abnahme, Martin entscheidet über die alten Tests.
 - Teil 1 (Martin, 2026-11-17): Durchschnitt = Summe der Snapshot-Werte / Anzahl der Snapshots im Monat; eine fehlende Nacht zählt nicht mit; fehlen mehrere Nächte, wird linear vom letzten Snapshot aus interpoliert und im Bericht als interpoliert gekennzeichnet. Ersetzt T6 „Wert der vorherigen Nacht“.
 - Teil 1 (Martin, 2026-11-17): Ein im Monat gelöschtes Projekt bleibt bis zum Monatsabschluss im Bericht, im Folgebericht nicht mehr.
 - Teil 1 (Martin, 2026-11-17): Excel statt CSV – ersetzt das CSV-Ausgabeformat aus T5; parse_project und build_rows bleiben.
-- T6: Ein Space, der in einem Snapshot fehlt, zählt dort mit 0 – Spaces, die nur einen Teil des Monats existieren, zählen anteilig.
-- T6: Der Snapshot vom 01. um 00:01 gilt für den letzten Tag des Vormonats; der neue Monat beginnt mit dem Snapshot vom 02.
-- T6: Interpolation je Space zwischen letztem und aktuellem Snapshot; Existenz an den fehlenden Tagen aus created/removed; Tage werden ihrem Kalendermonat zugeordnet, ein verpasster Monatsabschluss wird beim nächsten Lauf nachgeholt.
-- T6: Kennung eines Space = uuid – Namen werden nach dem Löschen erneut vergeben.
+- T7: Der Snapshot vom 01. um 00:01 gilt für den letzten Tag des Vormonats; der neue Monat beginnt mit dem Snapshot vom 02.
+- T7: Interpolation je Space zwischen letztem und aktuellem Snapshot; Existenz an den fehlenden Tagen aus created/removed; Tage werden ihrem Kalendermonat zugeordnet, ein verpasster Monatsabschluss wird beim nächsten Lauf nachgeholt.
+- T7: Kennung eines Space = uuid – Namen werden nach dem Löschen erneut vergeben.
 - T6: Zeitstempel der API (UTC) werden in Europe/Berlin umgerechnet.
-- T7: Ist die Excel-Datei gesperrt, bleibt der Zustand erhalten und der nächste Lauf schreibt den Bericht neu; ein noch nicht geschriebener Abschluss wird nachgeholt.
-- T7: Zugangsdaten (credentials) der API-Antwort werden nie in Bericht, Rohdaten oder Zustandsdatei übernommen.
-- T8: Projektzuordnung nur über gleichen Projektnamen (ohne Groß-/Kleinschreibung), keine unscharfe Suche nach Endungen wie _2 – sonst falsche Gruppen, z. B. „ddr 72“, „1989“.
-- T8: Reaktivierung = mindestens ein ganzer Tag, an dem kein Space des Projekts existierte (aus created/removed).
-- T8: LTO-Bestand nur für Looks-Projekte, deren letzter Space gelöscht ist; laufend fortgeführt; bei Reaktivierung bleibt der Eintrag bestehen.
-- Offen (Martin): Anfangsdatum bei reaktivierten Projekten; Wert im LTO-Bestand; Aktualität von mount_used_bytes.
+- T9: Ist die Excel-Datei gesperrt, bleibt der Zustand erhalten und der nächste Lauf schreibt den Bericht neu; ein noch nicht geschriebener Abschluss wird nachgeholt.
+- T6: Zugangsdaten (credentials) der API-Antwort werden nie in Bericht, Rohdaten oder Zustandsdatei übernommen.
+- T9: Projektzuordnung nur über gleichen Projektnamen (ohne Groß-/Kleinschreibung), keine unscharfe Suche nach Endungen wie _2 – sonst falsche Gruppen, z. B. „ddr 72“, „1989“.
+- T9: Reaktivierung = mindestens ein ganzer Tag, an dem kein Space des Projekts existierte (aus created/removed).
+- T9: LTO-Bestand nur für Looks-Projekte, deren letzter Space gelöscht ist; laufend fortgeführt; bei Reaktivierung bleibt der Eintrag bestehen.
+- Teil 1 (Martin, 2026-11-17): LTO-Wert = Durchschnitt über die Snapshots des Projekts im letzten Monat mit Werten, gekennzeichnet mit „~“; kein Höchstwert, nicht der letzte Snapshot.
+- Teil 1 (Martin, 2026-11-17): Anfangsdatum reaktivierter Projekte = Beginn der aktuellen Phase; frühere Phasen in Rohdaten/LTO-Bestand.
+- Teil 1 (Martin, 2026-11-17): Snapshots nur für den laufenden Monat; nach Abschluss werden sie gelöscht, soweit technisch nicht mehr nötig. Gelöschte Spaces werden nicht mit 0 geführt.
+- Teil 1 (Martin, 2026-11-17): LTO-Blatt mit Spalte „Looks“ und Hinweistext, dass es nur Looks-Projekte enthält, nicht den gesamten LTO-Bestand.
+- Teil 1 (Martin, 2026-11-17): Manuelle Zuordnungsliste ggf. nach dem ersten Lauf.
+- T6: mount_used_bytes ist aktuell – Admin-Panel 8,2 / 5,5 TiB gegen API 8,249 / 5,546 TiB; 1989 Onlining 15,05 gegen 15,48 TiB vermutlich Änderung zwischen den Zeitpunkten.
+- T6: Einheit TiB (2**40 Byte) – deckungsgleich mit EditShare-Panel und Quotas (quota_in_gb binär); ersetzt TB = 10**12 für Teil 1.
+- T7: Abrechnung je Space = Summe seiner Snapshot-Werte / Anzahl aller Snapshots des Monats; gelöschte Spaces haben keine weiteren Einträge (keine 0 gespeichert) – sonst zählt ein 1-Tages-Space als ganzer Monat.
+- T7: Ein zweiter Lauf am selben Tag ersetzt den Snapshot dieses Tages.
+- T8: Excel über openpyxl; TiB numerisch mit Format 0.00, im LTO-Blatt "~"0.00; Datum TT.MM.JJJJ; Dateiname Mediaspace-Report_YYYY-MM.xlsx.
+- T8: Bericht beginnt mit Statuszeile (Monat, Stand, Snapshots, vorläufig/abgeschlossen) – verhindert Abrechnung eines vorläufigen Berichts.
+- T9: Fehler nachts in begrenzter Logdatei (RotatingFileHandler) neben dem Skript.
+- T9: Unter Windows braucht zoneinfo das Paket tzdata – in README-Installation.
+- T8: Reviewer: Fehlermeldungen der API ohne Zugangsdaten (ersetzt durch [REDACTED]).
+- T9: Phase = zusammenhängende Lebenszeit der Spaces eines Projekts; neue Phase ab mindestens einem ganzen Tag ohne Space; Bericht nutzt die letzte Phase, die bis Monatsende begonnen hat.
+- T9: Rohdaten-Reihenfolge: Looks-Spaces nach Projekt und Name, danach Spaces ohne Zuordnung nach Name.
+- T10: LTO-Eintrag nur beim Monatsabschluss, mit dem Monatsmittel des letzten abgeschlossenen Monats mit Werten der aktuellen Phase; doppelt verhindert über Projekt + Phasenbeginn.
+- T10: Standard-Berichtsordner reports/ neben dem Skript, Martin trägt den festen Pfad in CONFIG ein – erster Lauf funktioniert ohne Anpassung.
+- T10: Gesperrter Bericht (PermissionError) = Warnung, Exit 0, Monat bleibt im Zustand; andere Schreibfehler = Exit 1; Zustand wird nach jedem erfolgreichen Snapshot gespeichert.
+- T10: Fehler beim Laden des Zustands, bei der API oder beim Snapshot: Exit 1, nichts geschrieben außer dem Log.
+- T10: README neu: nur storage_probe.py und mediaspace_report.py (ark_probe/ark_sources_probe nicht mehr im Repo); Zeitplan über Windows-Aufgabenplanung 00:01.
+- T10: Reviewer: gesperrter Berichtsordner (PermissionError beim Anlegen) wie gesperrter Bericht – Warnung, Zustand gespeichert, Berichte beim nächsten Lauf.
