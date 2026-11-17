@@ -37,21 +37,7 @@ Python 3.10 oder neuer. Installiert werden muss in das `python3`, das der Launch
 Im ausgecheckten Repo ausführen. `<flow-user>` ist der Linux-Benutzer, unter dem Flow Automation die Skripte ausführt; er braucht Schreibrechte im Ordner `mediaspace_report/`.
 
 ```bash
-base=/var/flow/automation/scripts
-sudo mkdir -p "$base/mediaspace_report"
-sudo cp mediaspace_report_launcher.py "$base/"
-sudo cp mediaspace_report.py ms_source.py ms_state.py ms_excel.py requirements.txt "$base/mediaspace_report/"
-sudo sed -i 's/\r$//' "$base/mediaspace_report_launcher.py" "$base"/mediaspace_report/*.py
-sudo chmod +x "$base/mediaspace_report_launcher.py"
-
-sudo tee "$base/mediaspace_report/cred.env" > /dev/null <<'ENV'
-FLOW_HOST=<host>
-FLOW_USER=<user>
-FLOW_PASSWORD=<password>
-ENV
-
-sudo chown -R <flow-user>:<flow-user> "$base/mediaspace_report"
-sudo chmod 600 "$base/mediaspace_report/cred.env"
+chmod +x /var/flow/automation/scripts/mediaspace_report_launcher.pyy
 
 python3 -m pip install -r "$base/mediaspace_report/requirements.txt"
 python3 -c "from zoneinfo import ZoneInfo; ZoneInfo('Europe/Berlin')"
