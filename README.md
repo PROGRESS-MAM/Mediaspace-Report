@@ -36,16 +36,41 @@ Python 3.10 oder neuer. Installiert werden muss in das `python3`, das der Launch
 
 ## Installation (Linux)
 
-Im ausgecheckten Repo ausführen. `<flow-user>` ist der Linux-Benutzer, unter dem Flow Automation die Skripte ausführt; er braucht Schreibrechte im Ordner `mediaspace_report/`.
+Im ausgecheckten Repo ausführen, ohne `sudo`. Voraussetzung: Schreibrechte in `/var/flow/automation/scripts`.
 
 ```bash
-chmod +x /var/flow/automation/scripts/mediaspace_report_launcher.py
+base=/var/flow/automation/scripts
+mkdir -p "$base/mediaspace_report"
+cp mediaspace_report_launcher.py "$base/"
+cp mediaspace_report.py ms_source.py ms_state.py ms_excel.py requirements.txt "$base/mediaspace_report/"
 
-python3 -m pip install -r "$base/mediaspace_report/requirements.txt"
+cat > "$base/mediaspace_report/cred.env" <<'ENV'
+FLOW_HOST=<host>
+FLOW_USER=<user>
+FLOW_PASSWORD=<password>
+ENV
+
+sed -i 's/\r$//' "$base/mediaspace_report_launcher.py" "$base"/mediaspace_report/*.py "$base/mediaspace_report/cred.env" "$base/mediaspace_report/requirements.txt"
+chmod +x "$base/mediaspace_report_launcher.py"
+
+python3 -m pip install --user -r "$base/mediaspace_report/requirements.txt"
 python3 -c "from zoneinfo import ZoneInfo; ZoneInfo('Europe/Berlin')"
 ```
 
 Alle Dateien müssen UNIX-Zeilenenden (LF) haben; der `sed`-Befehl entfernt eventuelle CR-Zeichen.
+
+### Rechte
+
+Der Benutzer, unter dem Flow Automation die Skripte ausführt, muss alle Dateien lesen und im Ordner `mediaspace_report/` schreiben können (State-JSON, Log). Eigenen und Flow-Benutzer prüfen:
+
+```bash
+id -un
+ps -eo user,args | grep -i "[f]low-automation"
+ls -l "$base" "$base/mediaspace_report"
+```
+
+- Gleicher Benutzer: zusätzlich `chmod 600 "$base/mediaspace_report/cred.env"`. `pip install --user` gilt dann auch für Flow.
+- Anderer Benutzer: Ein Administrator muss den Ordner `mediaspace_report/` diesem Benutzer zuweisen und die Pakete für dessen `python3` installieren. `chmod 600` auf `cred.env` dann nicht setzen, sonst kann Flow die Datei nicht lesen.
 
 ## Start
 
